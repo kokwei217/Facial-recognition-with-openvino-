@@ -74,31 +74,17 @@ def build_argparser():
                         help="Path to the Facial Landmarks Regression model XML file")
     models.add_argument('-m_reid', metavar="PATH", default="models/face-reidentification-retail-0095.xml", 
                         help="Path to the Face Reidentification model XML file")
-    models.add_argument('-fd_iw', '--fd_input_width', default=0, type=int,
-                         help="(optional) specify the input width of detection model " \
-                         "(default: use default input width of model). Both -fd_iw and -fd_ih parameters " \
-                         "should be specified for reshape.")
-    models.add_argument('-fd_ih', '--fd_input_height', default=0, type=int,
-                         help="(optional) specify the input height of detection model " \
-                         "(default: use default input height of model). Both -fd_iw and -fd_ih parameters " \
-                         "should be specified for reshape.")
-    
+
     infer = parser.add_argument_group('Inference options')
-    infer.add_argument('-d_fd', default='MULTI:CPU,MYRIAD', choices=DEVICE_KINDS,
+    infer.add_argument('-d_fd', default='MYRIAD', choices=DEVICE_KINDS,
                        help="(optional) Target device for the " \
                        "Face Detection model (default: %(default)s)")
-    infer.add_argument('-d_lm', default='MULTI:CPU,MYRIAD', choices=DEVICE_KINDS,
+    infer.add_argument('-d_lm', default='MYRIAD', choices=DEVICE_KINDS,
                        help="(optional) Target device for the " \
                        "Facial Landmarks Regression model (default: %(default)s)")
-    infer.add_argument('-d_reid', default='MULTI:CPU,MYRIAD', choices=DEVICE_KINDS,
+    infer.add_argument('-d_reid', default='MYRIAD', choices=DEVICE_KINDS,
                        help="(optional) Target device for the " \
                        "Face Reidentification model (default: %(default)s)")
-    infer.add_argument('-l', '--cpu_lib', metavar="PATH", default="",
-                       help="(optional) For MKLDNN (CPU)-targeted custom layers, if any. " \
-                       "Path to a shared library with custom layers implementations")
-    infer.add_argument('-c', '--gpu_lib', metavar="PATH", default="",
-                       help="(optional) For clDNN (GPU)-targeted custom layers, if any. " \
-                       "Path to the XML file with descriptions of the kernels")
     infer.add_argument('-v', '--verbose', action='store_true',
                        help="(optional) Be more verbose")
     infer.add_argument('-pc', '--perf_stats', action='store_true',
@@ -106,7 +92,7 @@ def build_argparser():
     infer.add_argument('-t_fd', metavar='[0..1]', type=float, default=0.6,
                        help="(optional) Probability threshold for face detections" \
                        "(default: %(default)s)")
-    infer.add_argument('-t_id', metavar='[0..1]', type=float, default=0.3,
+    infer.add_argument('-t_id', metavar='[0..1]', type=float, default=0.25,
                        help="(optional) Cosine distance threshold between two vectors " \
                        "for face identification (default: %(default)s)")
     infer.add_argument('-exp_r_fd', metavar='NUMBER', type=float, default=1.15,
@@ -115,6 +101,8 @@ def build_argparser():
     infer.add_argument('--allow_grow', action='store_true',
                        help="(optional) Allow to grow faces gallery and to dump on disk. " \
                        "Available only if --no_show option is off.")
+    infer.add_argument('--multi', action ='store_true',
+                       help = "(optional) Enable multi-ncs inferencing")
 
     return parser
 
@@ -127,15 +115,10 @@ class FrameProcessor:
         print (used_devices)
         self.context = InferenceContext()
         context = self.context
+
         log.info("Loading models")
+        # create network
         face_detector_net = self.load_model(args.m_fd)
-        
-        assert (args.fd_input_height and args.fd_input_width) or \
-               (args.fd_input_height==0 and args.fd_input_width==0), \
-            "Both -fd_iw and -fd_ih parameters should be specified for reshape"
-        
-        if args.fd_input_height and args.fd_input_width :
-            face_detector_net.reshape({"data": [1, 3, args.fd_input_height,args.fd_input_width]})
         landmarks_net = self.load_model(args.m_lm)
         face_reid_net = self.load_model(args.m_reid)
 
@@ -147,12 +130,14 @@ class FrameProcessor:
         self.face_identifier = FaceIdentifier(face_reid_net,
                                               match_threshold=args.t_id,
                                               match_algo = args.match_algo)
-
-        self.face_detector.deploy(args.d_fd, context)
+        #load network onto devices
+        self.face_detector.deploy(args.d_fd, context, enable_multi = False)
         self.landmarks_detector.deploy(args.d_lm, context,
-                                       queue_size=self.QUEUE_SIZE)
+                                       queue_size=self.QUEUE_SIZE,
+                                       enable_multi = args.multi)
         self.face_identifier.deploy(args.d_reid, context,
-                                    queue_size=self.QUEUE_SIZE)
+                                    queue_size=self.QUEUE_SIZE,
+                                    enable_multi = args.multi)
         log.info("Models are loaded")
 
         log.info("Building faces database using images from '%s'" % (args.fg))
@@ -178,6 +163,7 @@ class FrameProcessor:
         log.info("Model is loaded")
         return model
 
+    # pipeline process of facial recognition
     def process(self, frame):
         assert len(frame.shape) == 3, \
             "Expected input frame in (H, W, C) format"
@@ -199,6 +185,7 @@ class FrameProcessor:
                     " Will be processed only %s of %s." % \
                     (self.QUEUE_SIZE, len(rois)))
             rois = rois[:self.QUEUE_SIZE]
+        # pass the roi or faces into our landmark detector
         self.landmarks_detector.start_async(frame, rois)
         landmarks = self.landmarks_detector.get_landmarks()
 
@@ -342,7 +329,6 @@ class Visualizer:
         line_height = np.array([0, text_size[0][1]]) * 1.5
         cv2.putText(frame, text,
                     tuple(origin.astype(int)), font, text_scale, color, thickness)
-
         cv2.imshow('Face recognition', frame)
 
     def should_stop_display(self):
@@ -353,7 +339,7 @@ class Visualizer:
         self.input_stream = input_stream
         self.output_stream = output_stream
 
-        while input_stream.is_Opened():
+        while input_stream.isOpened():
             has_frame, frame = input_stream.read()
             if not has_frame:
                 break
@@ -386,13 +372,8 @@ class Visualizer:
 
     def run(self, args):
         input_stream = Visualizer.open_input_stream(args.input)
-        # if input_stream is None or not input_stream.isOpened():
-        if input_stream is None or not input_stream.is_Opened():        
+        if input_stream is None or not input_stream.isOpened():        
             log.error("Cannot open input stream: %s" % args.input)
-        # fps = input_stream.get(cv2.CAP_PROP_FPS)
-        # frame_size = (int(input_stream.get(cv2.CAP_PROP_FRAME_WIDTH)),
-        #               int(input_stream.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-        # self.frame_count = int(input_stream.get(cv2.CAP_PROP_FRAME_COUNT))
         fps = input_stream.getFPS()
         frame_size = (input_stream.getFrameWidth(),
                       input_stream.getFrameHeight())
@@ -400,8 +381,8 @@ class Visualizer:
         if args.crop_width and args.crop_height:
             crop_size = (args.crop_width, args.crop_height)
             frame_size = tuple(np.minimum(frame_size, crop_size))
-        log.info("Input stream info: %d x %d @ %.2f FPS" % \
-            (frame_size[0], frame_size[1], fps))
+        # log.info("Input stream info: %d x %d @ %.2f FPS" % \
+        #     (frame_size[0], frame_size[1], fps))
         output_stream = Visualizer.open_output_stream(args.output, fps, frame_size)
 
         self.process(input_stream, output_stream)
@@ -423,7 +404,7 @@ class Visualizer:
             stream = int(path)
         except ValueError:
             pass
-        # return cv2.VideoCapture(stream)
+        # return cv2.videoCapture(0)
         return WebcamVideoStream(src=stream).start()
 
 

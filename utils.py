@@ -37,6 +37,7 @@ def resize_input(frame, target_shape):
     n, c, h, w = target_shape
 
     input = frame[0]
+    # process frame shape to be equal to target shape
     if not np.array_equal(target_shape[-2:], frame.shape[-2:]):
         input = input.transpose((1, 2, 0)) # to HWC
         input = cv2.resize(input, (w, h))

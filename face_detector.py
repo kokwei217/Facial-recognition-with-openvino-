@@ -21,6 +21,7 @@ from utils import resize_input
 
 class FaceDetector(Module):
     class Result:
+        # the face detection model will return output of size 7 that contains the following
         OUTPUT_SIZE = 7
 
         def __init__(self, output):
@@ -47,12 +48,16 @@ class FaceDetector(Module):
             self.size[:] = clip(self.size, min, max)
 
     def __init__(self, model, confidence_threshold=0.5, roi_scale_factor=1.15):
+        # IE module init
         super(FaceDetector, self).__init__(model)
-
+        # configuring input and output
+        # BLOB stands for binary large objects, represent group of pixels
         assert len(model.inputs) == 1, "Expected 1 input blob"
         assert len(model.outputs) == 1, "Expected 1 output blob"
+        # inputs is a dictionary that maps input layer names to DataPtr Objects
         self.input_blob = next(iter(model.inputs))
         self.output_blob = next(iter(model.outputs))
+        # 4D array input which contains batch size height ,width and depth, where depth is the color
         self.input_shape = model.inputs[self.input_blob].shape
         self.output_shape = model.outputs[self.output_blob].shape
 
@@ -69,6 +74,7 @@ class FaceDetector(Module):
         self.roi_scale_factor = roi_scale_factor
 
     def preprocess(self, frame):
+        # prepare the frames to fit openvino's requirement of nchw
         assert len(frame.shape) == 4, "Frame shape should be [1, c, h, w]"
         assert frame.shape[0] == 1
         assert frame.shape[1] == 3
@@ -83,6 +89,8 @@ class FaceDetector(Module):
         return super(FaceDetector, self).enqueue({self.input_blob: input})
 
     def get_roi_proposals(self, frame):
+        # in here, the 0 refers to request ID, because we only send in one request
+        # get the outputs from model, which correspond to number of faces
         outputs = self.get_outputs()[0][self.output_blob]
         # outputs shape is [N_requests, 1, 1, N_max_faces, 7]
 
@@ -90,6 +98,7 @@ class FaceDetector(Module):
         frame_height = frame.shape[-2]
 
         results = []
+        # for each output, in the list of output from neural network, aka detected faces
         for output in outputs[0][0]:
             result = FaceDetector.Result(output)
             if result.confidence < self.confidence_threshold:

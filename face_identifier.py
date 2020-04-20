@@ -91,6 +91,8 @@ class FaceIdentifier(Module):
         return self.match_threshold
 
     def get_matches(self):
+        # neural network model output vector values for all the faces
+        # it is saved inside this list called descriptors as it is not the final result we want
         descriptors = self.get_descriptors()
 
         matches = []
@@ -107,6 +109,7 @@ class FaceIdentifier(Module):
                 unknowns_list.append(num)
 
             results.append(self.Result(id, distance, descriptors[num]))
+        # unknown list is for the allow-grow options
         return results, unknowns_list
 
     def get_descriptors(self):

@@ -152,17 +152,22 @@ class FacesDatabase:
     def match_faces(self, descriptors, match_algo='HUNGARIAN'):
         database = self.database
         distances = np.empty((len(descriptors), len(database)))
+        # for each faces detected
         for i, desc in enumerate(descriptors):
+            # for each unique identity in database
             for j, identity in enumerate(database):
                 dist = []
                 for k, id_desc in enumerate(identity.descriptors):
                     dist.append(FacesDatabase.Identity.cosine_dist(desc, id_desc))
+                # find the min distance for each of the same label in database, and match it for detected
+                # faces in app and database face: eg face A - kok wei min dist = 0.6 , dik min dist = 0.3
                 distances[i][j] = dist[np.argmin(dist)]
 
         matches = []
         # if user specify MIN_DIST for face matching, face with minium cosine distance will be selected.
         if match_algo == 'MIN_DIST':
             for i in range(len(descriptors)):
+                # now we have a value of distances for each face in database
                 id = np.argmin(distances[i])
                 min_dist = distances[i][id]
                 matches.append((id, min_dist))
@@ -234,6 +239,7 @@ class FacesDatabase:
             match, label = self.check_if_label_exists(label)
 
         if match < 0:
+            # create the identity database
             self.database.append(FacesDatabase.Identity(label, [desc]))
             log.debug("Adding label {} to the database".format(label))
         else:
